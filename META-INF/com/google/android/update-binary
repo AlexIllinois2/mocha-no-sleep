@@ -1,0 +1,110 @@
+#!/sbin/sh
+# 恢复(TWRP)安装器：把本包内容装成 Magisk 模块
+#
+# 解释器与参数都不许写死假设（都是这台机实测踩出来的）：
+#   - shebang 必须 /sbin/sh：本 TWRP 是 omni 5.1.1 ramdisk，PATH=/sbin:/system/bin 且
+#     没有 /system/bin/sh。写错表现为 "Updater process ended with ERROR: 255"、0 秒退出、
+#     一条 ui_print 都不落日志。官方 LOS recovery 相反，只有 /system/bin/sh。
+#   - 参数按位置取会错：本机 TWRP 把包路径放在 $3（不是我以为的 $4），于是按 $4 取包
+#     取到空、脚本自己 exit 1，TWRP 报 "ERROR: 1"。改为按形状识别：
+#     存在的 *.zip => 包路径；FIFO 路径或纯数字 => 输出通道(fd 号或管道路径)。
+# 先把 argv 原样打进日志：万一某个 recovery 又换了形状，日志一眼能看出来。
+
+MODID=mocha_no_sleep
+DEST=/data/adb/modules/$MODID
+TMP=/dev/tmp/$MODID
+
+ZIP=""
+OUT=""
+i=0
+for a in "$@"; do
+  i=$((i + 1))
+  case "$a" in
+    *.zip|*.ZIP)
+      if [ -f "$a" ]; then ZIP="$a"; continue; fi
+      ;;
+  esac
+  if [ -p "$a" ]; then OUT="$a"; continue; fi
+  case "$a" in
+    ''|*[!0-9]*) : ;;
+    *) [ -n "$OUT" ] || OUT="/proc/self/fd/$a" ;;
+  esac
+done
+[ -n "$OUT" ] || OUT=/dev/null
+
+ui_print() {
+  printf '%s\n' "$1"
+  printf 'ui_print %s\nui_print\n' "$1" > "$OUT" 2>/dev/null
+}
+
+set_progress() {
+  printf 'progress %s\n' "$1" > "$OUT" 2>/dev/null
+}
+
+ui_print "- 安装 $MODID"
+ui_print "  收到的参数：$#，解出包=[$ZIP] 输出通道=[$OUT]"
+n=0
+for a in "$@"; do
+  n=$((n + 1))
+  printf 'argv[%s]=%s\n' "$n" "$a" > "$OUT" 2>/dev/null
+done
+set_progress 0.1
+
+if [ -z "$ZIP" ]; then
+  ui_print "错误: 参数里没找到存在的 .zip 包路径（上面已列出全部 argv）"
+  exit 1
+fi
+if [ ! -d /data/adb/magisk ]; then
+  ui_print "错误: 这台机器上没有 Magisk(/data/adb/magisk 不存在)"
+  ui_print "      本包只作为 Magisk 模块安装，请先装好 Magisk 再刷。"
+  exit 1
+fi
+
+mount -o remount,rw /data 2>/dev/null
+rm -rf "$TMP"
+mkdir -p "$TMP" || { ui_print "错误: 无法创建 $TMP"; exit 1; }
+if ! unzip -o -q "$ZIP" -d "$TMP"; then
+  ui_print "错误: 解压失败(恢复环境里可能没有 unzip)"
+  exit 1
+fi
+set_progress 0.4
+
+mkdir -p "$DEST" || { ui_print "错误: 无法创建 $DEST"; exit 1; }
+# 逐文件复制包内顶层文件。不写死清单——写死会让以后新增的文件被静默漏装
+NCP=0
+for f in "$TMP"/*; do
+  [ -f "$f" ] || continue
+  cp "$f" "$DEST/${f##*/}" || { ui_print "错误: 复制 ${f##*/} 失败"; exit 1; }
+  NCP=$((NCP + 1))
+done
+chmod 644 "$DEST/module.prop" "$DEST/README.md" 2>/dev/null
+chmod 750 "$DEST/post-fs-data.sh" "$DEST/service.sh" "$DEST/crashwatch.sh" "$DEST/report.sh" "$DEST/customize.sh" 2>/dev/null
+
+# v4.0：稳定档位已并入本模块，移除上一版的独立 freq_cap 模块，避免两处写同一批 sysfs
+if [ -d /data/adb/modules/freq_cap ]; then
+  rm -rf /data/adb/modules/freq_cap
+  ui_print "  已移除旧模块 freq_cap（设置已并入本包）"
+fi
+
+# 重新刷入 = 明确要求启用，清掉上次遗留的开关标记
+rm -f "$DEST/remove" "$DEST/disable" 2>/dev/null
+set_progress 0.8
+
+# 产物清单核对：必需件齐才算装成，不靠"没报错"当成功
+MISS=""
+for f in module.prop post-fs-data.sh service.sh crashwatch.sh report.sh README.md; do
+  [ -s "$DEST/$f" ] || MISS="$MISS $f"
+done
+if [ -n "$MISS" ]; then
+  ui_print "错误: 安装后缺少$MISS"
+  exit 1
+fi
+
+rm -rf "$TMP"
+ui_print "- 已安装 $MODID ($(grep -m1 '^version=' "$DEST/module.prop" | cut -d= -f2), $NCP 个文件)"
+ui_print "  出 bug 先跑: sh $DEST/report.sh   (全账与地雷见 $DEST/README.md)"
+ui_print "  生效后不再深睡，CPU/EMC 走稳定档位，待机耗电会上升。"
+ui_print "  恢复出厂的休眠行为：在 Magisk 里关闭/删除本模块，或"
+ui_print "  rm -rf /data/adb/modules/$MODID 后重启"
+set_progress 1.0
+exit 0

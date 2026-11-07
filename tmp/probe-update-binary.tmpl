@@ -1,0 +1,30 @@
+@SHEBANG@
+# TWRP 探针包：只记录环境事实，不改任何东西
+LOG=@LOG@
+mkdir -p /data/local/tmp 2>/dev/null
+exec >> "$LOG" 2>&1
+echo "===== probe $(date) ====="
+echo "args: 1=$1 2=$2 3=$3 4=$4 5=$5 个数=$#"
+echo "pwd=$(pwd)"
+echo "PATH=$PATH"
+echo "id=$(id 2>&1)"
+echo "getenforce=$(getenforce 2>&1)"
+echo "-- 解释器是否存在 --"
+for i in /system/bin/sh /sbin/sh /system/xbin/sh /sbin/busybox /system/bin/toybox /system/bin/busybox; do
+  if [ -e "$i" ]; then echo "  有 $i"; else echo "  无 $i"; fi
+done
+echo "-- 工具 --"
+for c in unzip mkfifo sha256sum toybox busybox mount grep sed awk cut head stat; do
+  p=$(command -v $c 2>/dev/null); echo "  $c => ${p:-找不到}"
+done
+echo "-- 关键路径 --"
+for d in /dev/tmp /data/adb /data/adb/magisk /sdcard /cache /tmp; do
+  [ -d "$d" ] && echo "  目录在 $d 可写=$(touch $d/.probe_w 2>/dev/null && echo yes && rm -f $d/.probe_w || echo no)" || echo "  目录无 $d"
+done
+echo "-- mounts(前 14) --"
+mount 2>/dev/null | head -14
+echo "-- 收到的参数原文(逐行) --"
+n=0
+for a in "$@"; do echo "  argv[$n]=$a"; n=$((n + 1)); done
+echo "===== probe end ====="
+exit 0

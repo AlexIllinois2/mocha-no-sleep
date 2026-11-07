@@ -1,0 +1,7 @@
+id=mocha_no_sleep
+name=Mi Pad 1 崩溃修复 (no-suspend + 稳定档位)
+version=v4.0
+versionCode=9
+author=qoder
+description=闸门 1：阻止内核收到挂起请求——mocha 的 alarmtimer 交不出 RTC(platform_pm_suspend 返回 -16)，每次真睡都在半路中止并反复重跑 Tegra LP 挂起/唤醒序列，若干轮后内核内存被踩烂(undefined instruction / Bad page map / hard LOCKUP)，而进睡时武装的 WDT recovery 会把卡死变成 Force Recovery(RCM)。闸门 2(v4.0)：低功耗档位加固——CPU 上限 1632MHz、禁用 cpu powered-down 深空闲(state1)、EMC 空闲下限 528MHz(vdd_core 最低 880mV)，并由 post-fs-data.sh 在开机早期落盘。代价：不再有深睡且待机耗电上升。在 Magisk 里关闭本模块即可恢复。
+changes=v4.0: 合并稳定档位(限频1632/禁powered-down/EMC下限528)；设置提前到 post-fs-data 并在 service.sh 兜底(11-03 证据：开机 12.64s 仍在 tegra_set_cpu_in_pd 空指针 panic)；安装时自动移除旧的 freq_cap 模块
